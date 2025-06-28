@@ -10,7 +10,7 @@
 // @name:de      Standard Notes - Mit dem Zurück-Button zur vorherigen Ansicht ⏪
 // @name:pt-BR   Standard Notes - Voltar para a tela anterior com o botão do navegador ⏪
 // @name:ru      Standard Notes - Переход к предыдущему экрану по кнопке Назад ⏪
-// @version      1.2.0
+// @version      1.5.0
 // @description         Makes the browser back button return to the previous screen inside Standard Notes (e.g. notes, tags, settings), instead of closing the tab.
 // @description:ja      Standard Notesのウェブ版で、ブラウザの「戻る」操作によりノート一覧・タグ・検索・設定などの前画面に戻れるようにします。タブが閉じることなく、自然なナビゲーションを実現します。
 // @description:en      Makes the browser back button return to the previous screen inside Standard Notes (e.g. notes, tags, settings), instead of closing the tab.
@@ -27,7 +27,7 @@
 // @match        https://app.standardnotes.com/*
 // @grant        none
 // @license      MIT
-// @run-at       document-idle
+// @run-at       document-start
 // @homepageURL  https://github.com/koyasi777/standardnotes-mobile-back-fix
 // @supportURL   https://github.com/koyasi777/standardnotes-mobile-back-fix/issues
 // @icon         https://app.standardnotes.com/favicon/favicon-32x32.png
@@ -36,76 +36,62 @@
 (function() {
     'use strict';
 
-    // --- Configuration ---
-    // The selector for ANY "back to list" button.
-    // Both the header and footer buttons share this stable aria-label identifier.
     const backButtonSelector = 'button[aria-label="Go to items list"]';
-
-    // A flag to prevent duplicate history pushes
     let isHistoryStatePushed = false;
+    let debounceTimer = null;
 
-    console.log('Standard Notes Back-Fix script loaded (v1.2).');
-
-    /**
-     * This function checks if a "Go to items list" button is visible anywhere on the page.
-     * If so, it pushes a state to the browser history. This allows us to intercept the 'popstate'
-     * event (the back button action) without the browser actually leaving the page.
-     * This logic is more robust as it doesn't depend on a specific container like a title bar.
-     */
-    const addHistoryStateIfNavigableBack = () => {
+    function syncHistoryState() {
         const backButton = document.querySelector(backButtonSelector);
 
         if (backButton && !isHistoryStatePushed) {
-            // A back button is visible, which means we are in a view we can navigate back from.
-            // Push a new state to the history stack.
-            history.pushState({ snBackFix: true }, '');
-            isHistoryStatePushed = true;
-            console.log('Back-navigable view detected, history state pushed.');
+            try {
+                history.pushState({ snBackFix: true }, document.title);
+                isHistoryStatePushed = true;
+            } catch (e) {
+                console.warn('SN Back-Fix: Failed to push history state:', e);
+            }
         } else if (!backButton && isHistoryStatePushed) {
-            // No back button is found, so we are likely on the main list view. Reset the flag.
-            // This happens when the user navigates back to the list.
-            isHistoryStatePushed = false;
-            console.log('Main view detected, history state reset.');
-        }
-    };
-
-    /**
-     * This is the handler for the 'popstate' event, which fires when the user
-     * navigates through their session history (e.g., using the back/forward button).
-     * @param {PopStateEvent} event - The popstate event object.
-     */
-    const handleBackButton = (event) => {
-        // We only care about this event if our custom state was just popped.
-        if (!isHistoryStatePushed) {
-            return;
-        }
-
-        console.log('popstate event detected.');
-        const backButton = document.querySelector(backButtonSelector);
-
-        // If the back button exists, it means we can programmatically navigate back.
-        if (backButton) {
-            console.log('Back button found. Simulating click.');
-            // Simulate a click on the app's own back button.
-            // This triggers the app's native navigation logic.
-            backButton.click();
-            // Reset the flag immediately after handling it.
             isHistoryStatePushed = false;
         }
-    };
+    }
 
-    // Listen for the popstate event.
-    window.addEventListener('popstate', handleBackButton);
+    function handlePopstate(event) {
+        if (event.state && event.state.snBackFix) {
+             const backButton = document.querySelector(backButtonSelector);
+             if (backButton) {
+                 backButton.click();
+             }
+        }
+        isHistoryStatePushed = false;
+    }
 
-    // Because Standard Notes is a Single Page Application (SPA), the content
-    // is loaded dynamically. We need to monitor the DOM for changes to detect
-    // when a back button appears or disappears.
-    const observer = new MutationObserver(addHistoryStateIfNavigableBack);
+    function initialize() {
+        if (window.snBackFixInitialized) return;
+        window.snBackFixInitialized = true;
 
-    // Start observing the entire document for additions/removals of elements.
-    observer.observe(document.body, {
-        childList: true,
-        subtree: true
-    });
+        window.addEventListener('popstate', handlePopstate);
 
+        const observer = new MutationObserver(() => {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(syncHistoryState, 150);
+        });
+
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+
+        syncHistoryState();
+    }
+
+    if (document.body) {
+        initialize();
+    } else {
+        new MutationObserver((mutations, obs) => {
+            if (document.body) {
+                obs.disconnect();
+                initialize();
+            }
+        }).observe(document.documentElement, { childList: true });
+    }
 })();
